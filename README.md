@@ -434,22 +434,58 @@ e no ZWCAD ainda depende de você rodar. **Rode sempre numa cópia primeiro.**
 
 ## O que ainda não está automatizado
 
-Problemas identificados no desenho modelo que a rotina ainda não trata:
+Passos que continuam sendo feitos na mão. É a fila de trabalho das próximas
+etapas da rotina.
 
-1. **Cópia crua do CYPE na origem** — 539 textos e 809 entidades largados
-   fora da prancha. Boa parte dos 3,5 MB do arquivo.
-2. **Erro de digitação `6º AVTO`** (falta o "P") em `CORTE_NOMES_DAS_PLANTAS`
-   e em `Planta: 6º AVTO`. No mesmo desenho existem `5º Pavimento` e, no
-   carimbo, `6o. PAVIMENTO` — três grafias diferentes.
-3. **19 layers vazias** (`GrAcad01-06`, `Usuario01-03`, `Lista_Ferros_*`,
-   `Telas de Aço*`, `PILAR_BETAO`, `Cotas`…).
-4. **5.568 `POLYLINE_2D` no formato antigo**, com 135 mil vértices soltos —
-   contra apenas 6 `LWPOLYLINE`. Converter reduz muito o arquivo.
-5. **3 objetos OLE** na layer 0, que costumam dar problema no ZWCAD.
-6. **Espessuras muito finas** nas layers do CYPE (0,00 / 0,09 / 0,15 /
-   0,20 mm).
-7. **Layers com `Ø` e acentos** (`ARM_LONGITUDINAL_Ø20`, `Telas de Aço em
-   Elevação`) — risco de encoding entre AutoCAD e ZWCAD.
+**1 — Apagar elevação menor**
+
+**2 — Textos**
+
+Apagar:
+
+- Cotas "5", elevação e estribos
+- Textos abreviados
+
+**3 — Montar o quadro**
+
+- Colocar o título
+- Planta com nome dos ferros (à esquerda do quadro)
+- Estribos com nome dos ferros
+- Mover os níveis para a esquerda da elevação (no olho com o ortho ligado)
+- Mover os ferros para o lado da elevação (ficam à direita)
+- Mover elevação dos estribos para o lado dos ferros
+
+Tudo isso à esquerda do quadro.
+
+**4 — Stretch em linha de nível** (no olho)
+
+- Estender a chamada dos estribos e colocar à direita
+
+**5 — Ferros esperas**
+
+- Apagar a dobra da curva, explodir o ferro e apagar
+
+**6 — Colorir os ferros verticais na elevação → Cor 21**
+
+- Inclusive esperas
+
+**7 — Alinhar ferros "tortos"**
+
+- Explodir
+- Estender até a ponta
+- Apagar o "torto"
+
+**8 — Acertar os níveis com `find`**
+
+- Serão enviados junto com o desenho
+
+**9 — Verificar bolinhas de sobreposição**
+
+- Às vezes vêm em cima do estribo, é necessário mover
+
+**10 — Apagar as medidas dos ferros que não são necessários**
+
+**11 — Arrumar a lista**
 
 ---
 
