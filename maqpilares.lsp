@@ -47,6 +47,7 @@
 (defun PL:ALTURAS-TROCAR ()
   (list
     (cons 12.667 18.0)   ; titulo da tabela de detalhe
+    (cons 13.333 12.5)   ; referencias de posicao, cotas dos estribos
   )
 )
 
