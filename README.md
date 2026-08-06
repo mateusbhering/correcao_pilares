@@ -61,24 +61,31 @@ Select objects: [faça a janela]
       [parcial]  CORTE_PISOS  (98 objetos apagados, restam 98 fora da area)
       -> 126 objetos apagados, 1 layers removidas
 
-  [2] Estilo de texto -> ROMANS
+  [2] Textos a apagar pelo conteudo
+      24N[1]-%%c20
+      8N[1]-%%c20
+      10N[2]-%%c20
+      ... e mais 9
+      -> 12 textos apagados
+
+  [3] Estilo de texto -> ROMANS
       CYPETXT_romans -> ROMANS  (23 textos)
       -> 23 textos trocados, 267 ja estavam em ROMANS
 
-  [3] Altura de texto
+  [4] Altura de texto
       12.6667 -> 18.0000  (7 textos)
       13.3333 -> 12.5000  (159 textos)
       outras alturas encontradas (sem regra):
         10.0000 (226)  12.3333 (14)  18.0000 (7)  12.5000 (10)
       -> 166 alturas trocadas
 
-  [4] Espacamento nas anotacoes
+  [5] Espacamento nas anotacoes
       N2-%%c5c/18c=444   ->   N2-%%c5 c/18 c=444
       N1-24%%c20c=380   ->   N1-24%%c20 c=380
       ...
       -> 31 textos ajustados
 
-  [5] Fator de largura -> 0.9000
+  [6] Fator de largura -> 0.9000
       larguras originais entre 0.7213 e 1.1565
       -> 614 textos ajustados, 539 ja estavam em 0.9000
       37 MTEXT nao alterados (fator de largura de MTEXT vem do estilo)
@@ -118,7 +125,24 @@ O relatório distingue três situações por layer:
 | `[parcial]` | limpou a área, mas ainda há conteúdo fora dela |
 | `[-]` | não havia nada dessa layer na área selecionada |
 
-### Etapa 2 — Padroniza o estilo dos textos
+### Etapa 2 — Apaga textos pelo conteúdo
+
+Apaga **o texto inteiro** de toda entidade cujo conteúdo contenha `[` ou `]`.
+
+São os rótulos de numeração local do CYPE nas vistas de seção
+(`50N[1]-%%c25`, `8N[1]-%%c20`, `10N[2]-%%c20`…). O CYPE numera as barras
+localmente por seção, enquanto a elevação usa a numeração global (`N1`, `N4`,
+`N5`). No desenho modelo são **24 textos**, todos em
+`PILCPSECC_ARM_LONG_REFERENCIA`.
+
+A comparação é **literal**, não curinga — `PL:APAGAR-SE-CONTEM` é uma lista de
+trechos, e basta um deles aparecer no texto para a entidade ser apagada.
+
+Atributos de bloco (`ATTRIB`) não são apagados: são sub-entidades e só somem
+mexendo na inserção ou na definição do bloco. Se algum casar com a regra, ele
+é contado e informado.
+
+### Etapa 3 — Padroniza o estilo dos textos
 
 Troca o estilo de todos os textos para **`ROMANS`**.
 
@@ -131,7 +155,7 @@ Se o estilo `ROMANS` não existir no desenho, ele é criado com a fonte
 O relatório mostra **de onde veio** cada troca (`CYPETXT_romans -> ROMANS
 (23 textos)`), para você conferir se pegou o que devia.
 
-### Etapa 3 — Padroniza as alturas de texto
+### Etapa 4 — Padroniza as alturas de texto
 
 Aplica uma tabela de regras `(altura atual . altura nova)`:
 
@@ -144,7 +168,7 @@ O relatório também lista **as alturas encontradas na área que não tinham
 regra**. É assim que você descobre o que ainda falta padronizar, sem sair
 medindo texto na mão.
 
-### Etapa 4 — Espaçamento nas anotações de ferro
+### Etapa 5 — Espaçamento nas anotações de ferro
 
 Garante um espaço antes de `c/` e `c=`:
 
@@ -154,7 +178,7 @@ N1-24%%c20c=380     ->    N1-24%%c20 c=380
 N2-+9N3- c/18       ->    N2-+9N3- c/18       (já estava certo, não mexe)
 ```
 
-### Etapa 5 — Uniformiza o fator de largura
+### Etapa 6 — Uniformiza o fator de largura
 
 Coloca o fator de largura de todos os textos em **0,9**.
 
@@ -185,13 +209,18 @@ Tudo fica no **topo do arquivo**. Não é preciso mexer no resto do código.
   )
 )
 
-;; Estilo de texto de destino da etapa 2.
+;; Textos com estes trechos são apagados inteiros, na etapa 2.
+(defun PL:APAGAR-SE-CONTEM ()
+  (list "[" "]")
+)
+
+;; Estilo de texto de destino da etapa 3.
 (defun PL:ESTILO-TEXTO () "ROMANS")
 
 ;; Fonte usada se o estilo acima ainda não existir no desenho.
 (defun PL:ESTILO-FONTE () "romans.shx")
 
-;; Trocas de altura da etapa 3: (altura atual . altura nova)
+;; Trocas de altura da etapa 4: (altura atual . altura nova)
 (defun PL:ALTURAS-TROCAR ()
   (list
     (cons 12.667 18.0)
@@ -202,10 +231,10 @@ Tudo fica no **topo do arquivo**. Não é preciso mexer no resto do código.
 ;; Folga na comparação de altura.
 (defun PL:ALTURA-TOL () 0.01)
 
-;; Fator de largura de destino da etapa 5. nil desliga a etapa.
+;; Fator de largura de destino da etapa 6. nil desliga a etapa.
 (defun PL:LARGURA-TEXTO () 0.9)
 
-;; Trechos que devem ter espaço na frente, na etapa 4.
+;; Trechos que devem ter espaço na frente, na etapa 5.
 (defun PL:ESPACO-ANTES ()
   (list "c/" "c=")
 )
@@ -325,7 +354,7 @@ os textos em A param em B.
 
 ### O espaçamento é idempotente
 
-A etapa 4 **não é uma substituição de texto**. Parte das anotações já vem
+A etapa 5 **não é uma substituição de texto**. Parte das anotações já vem
 com o espaço (`N2-+9N3- c/18`, em `CORTE_TEXTO_DAS_COTAS`). Trocar `c/` por
 ` c/` nesses geraria espaço dobrado, e o estrago aumentaria a cada execução.
 
@@ -350,7 +379,7 @@ Em `TEXT`, `ATTDEF` e `ATTRIB` o código 41 é o **fator de largura**. Em
 MTEXT não deixaria a fonte mais estreita — espremeria o parágrafo inteiro
 para 0,9 unidade de largura.
 
-Por isso a etapa 5 exclui MTEXT e informa quantos encontrou.
+Por isso a etapa 6 exclui MTEXT e informa quantos encontrou.
 
 ### Falhas aparecem no relatório
 
@@ -367,7 +396,7 @@ texto. Mudar exige mexer no estilo ou criar override. A rotina conta quantos
 encontrou e informa no relatório. O desenho modelo tem 34 `DIMENSION_ALIGNED`
 nessa situação, usando o dimstyle `cype_oblique`.
 
-**MTEXT longo não é alterado na etapa 4.** Nele o texto é repartido entre
+**MTEXT longo não é alterado na etapa 5.** Nele o texto é repartido entre
 vários códigos DXF 3 mais o código 1; mexer só no 1 quebraria o conteúdo.
 Esses são contados e informados. No desenho modelo não há nenhum nessa
 situação.
@@ -390,17 +419,14 @@ Problemas identificados no desenho modelo que a rotina ainda não trata:
 2. **Erro de digitação `6º AVTO`** (falta o "P") em `CORTE_NOMES_DAS_PLANTAS`
    e em `Planta: 6º AVTO`. No mesmo desenho existem `5º Pavimento` e, no
    carimbo, `6o. PAVIMENTO` — três grafias diferentes.
-3. **Posições não resolvidas nas seções** — os cortes usam `N[1]`, `N[2]`,
-   `N[3]` (numeração local do CYPE) enquanto a elevação usa a global `N1`,
-   `N4`, `N5`, `N8`. Aparece `N4-` ao lado de `8N[1]-%%c20`.
-4. **19 layers vazias** (`GrAcad01-06`, `Usuario01-03`, `Lista_Ferros_*`,
+3. **19 layers vazias** (`GrAcad01-06`, `Usuario01-03`, `Lista_Ferros_*`,
    `Telas de Aço*`, `PILAR_BETAO`, `Cotas`…).
-5. **5.568 `POLYLINE_2D` no formato antigo**, com 135 mil vértices soltos —
+4. **5.568 `POLYLINE_2D` no formato antigo**, com 135 mil vértices soltos —
    contra apenas 6 `LWPOLYLINE`. Converter reduz muito o arquivo.
-6. **3 objetos OLE** na layer 0, que costumam dar problema no ZWCAD.
-7. **Espessuras muito finas** nas layers do CYPE (0,00 / 0,09 / 0,15 /
+5. **3 objetos OLE** na layer 0, que costumam dar problema no ZWCAD.
+6. **Espessuras muito finas** nas layers do CYPE (0,00 / 0,09 / 0,15 /
    0,20 mm).
-8. **Layers com `Ø` e acentos** (`ARM_LONGITUDINAL_Ø20`, `Telas de Aço em
+7. **Layers com `Ø` e acentos** (`ARM_LONGITUDINAL_Ø20`, `Telas de Aço em
    Elevação`) — risco de encoding entre AutoCAD e ZWCAD.
 
 ---
@@ -425,7 +451,8 @@ Arquivo único: `maqpilares.lsp`.
 
 ```
 CONFIGURACAO          PL:LAYERS-ROTINA, PL:ESTILO-TEXTO, PL:ESTILO-FONTE,
-                      PL:ALTURAS-TROCAR, PL:ALTURA-TOL, PL:LARGURA-TEXTO,
+                      PL:APAGAR-SE-CONTEM, PL:ALTURAS-TROCAR, PL:ALTURA-TOL,
+                      PL:LARGURA-TEXTO,
                       PL:ESPACO-ANTES
 
 AUXILIARES            pl:esc              protege curingas em nome de layer
@@ -443,12 +470,13 @@ AUXILIARES            pl:esc              protege curingas em nome de layer
                                           de erro
                       pl:definir-dxf      idem, criando o par se faltar
 
-ETAPAS                pl:etapa-layers     [1]
-                      pl:etapa-estilo     [2]
-                      pl:nova-altura      regra da [3]
-                      pl:etapa-altura     [3]
-                      pl:etapa-texto      [4]
-                      pl:etapa-largura    [5]
+ETAPAS                pl:etapa-layers        [1]
+                      pl:etapa-apagar-texto  [2]
+                      pl:etapa-estilo        [3]
+                      pl:nova-altura         regra da [4]
+                      pl:etapa-altura        [4]
+                      pl:etapa-texto         [5]
+                      pl:etapa-largura       [6]
 
 COMANDO               c:maqpilares
 ```

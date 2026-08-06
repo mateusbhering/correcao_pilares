@@ -12,14 +12,16 @@
 ;;;  Etapas:
 ;;;    1) Apaga as layers de rotina (nome do pavimento, nome das vistas,
 ;;;       niveis intermediarios, nome da secao e sombra).
-;;;    2) Troca o estilo de todos os textos para ROMANS.
-;;;    3) Troca alturas de texto conforme a tabela de regras.
-;;;    4) Garante espaco antes de "c/" e "c=" nas anotacoes de ferro.
-;;;    5) Uniformiza o fator de largura dos textos.
+;;;    2) Apaga textos pelo conteudo (os que tem colchete).
+;;;    3) Troca o estilo de todos os textos para ROMANS.
+;;;    4) Troca alturas de texto conforme a tabela de regras.
+;;;    5) Garante espaco antes de "c/" e "c=" nas anotacoes de ferro.
+;;;    6) Uniformiza o fator de largura dos textos.
 ;;;
 ;;;  Configuracao no topo do arquivo:
 ;;;    PL:LAYERS-ROTINA   - layers apagadas. Aceita curinga (* e ?), entao
 ;;;                         "CORTE_COTAS_*" pega todas que comecam assim.
+;;;    PL:APAGAR-SE-CONTEM- textos com estes trechos sao apagados.
 ;;;    PL:ESTILO-TEXTO    - estilo de texto de destino.
 ;;;    PL:ALTURAS-TROCAR  - pares (altura atual . altura nova).
 ;;;    PL:LARGURA-TEXTO   - fator de largura de destino.
@@ -40,6 +42,13 @@
     "CORTE_SEGMENTOS_DE_CORTE_DE_SECOES"     ; d - nome da secao
     "CORTE_PISOS"                            ; e - sombra
   )
+)
+
+;; Textos que contenham qualquer um destes trechos sao apagados inteiros.
+;; Comparacao literal, nao curinga. Os rotulos de numeracao local do CYPE
+;; ("50N[1]-%%c25") usam colchete e nao sao aproveitados no detalhamento.
+(defun PL:APAGAR-SE-CONTEM ()
+  (list "[" "]")
 )
 
 (defun PL:ESTILO-TEXTO () "ROMANS")
@@ -312,13 +321,67 @@
 )
 
 ;;; ---------------------------------------------------------------------------
-;;; ETAPA 2 - padronizar o estilo de todos os textos
+;;; ETAPA 2 - apagar textos que contenham os trechos configurados
+;;; ---------------------------------------------------------------------------
+
+(defun pl:etapa-apagar-texto (ss / e ed tipo s achou mortos exemplos
+                                   atribs n)
+  (princ "\n  [2] Textos a apagar pelo conteudo\n")
+
+  (if (null (PL:APAGAR-SE-CONTEM))
+    (progn (princ "      nenhuma regra configurada\n") 0)
+
+    (progn
+      (setq mortos (ssadd) exemplos nil atribs 0)
+
+      (foreach e (pl:textos ss)
+        (setq ed   (entget e)
+              tipo (cdr (assoc 0 ed))
+              s    (cdr (assoc 1 ed)))
+        (if s
+          (progn
+            (setq achou nil)
+            (foreach trecho (PL:APAGAR-SE-CONTEM)
+              (if (vl-string-search trecho s) (setq achou T)))
+            (if achou
+              ;; ATTRIB e sub-entidade de um bloco: nao da para apagar
+              ;; sozinho, so mexendo na insercao ou na definicao.
+              (if (= tipo "ATTRIB")
+                (setq atribs (1+ atribs))
+                (progn
+                  (ssadd e mortos)
+                  (if (< (length exemplos) 6)
+                    (setq exemplos (cons s exemplos)))))))))
+
+      (setq n (sslength mortos))
+
+      (if (zerop n)
+        (princ "      nenhum texto com esses trechos nesta area\n")
+        (progn
+          (foreach s (reverse exemplos)
+            (princ (strcat "      " s "\n")))
+          (if (> n (length exemplos))
+            (princ (strcat "      ... e mais "
+                           (itoa (- n (length exemplos))) "\n")))
+          (command "_.ERASE" mortos "")
+          (princ (strcat "      -> " (itoa n) " textos apagados\n"))))
+
+      (if (> atribs 0)
+        (princ (strcat "      " (itoa atribs)
+                       " atributos de bloco nao apagados"
+                       " (sao sub-entidades)\n")))
+
+      n))
+)
+
+;;; ---------------------------------------------------------------------------
+;;; ETAPA 3 - padronizar o estilo de todos os textos
 ;;; ---------------------------------------------------------------------------
 
 (defun pl:etapa-estilo (ss / estilo lista e ed atual res trocados iguais
                              travados pulados origens i tipo)
   (setq estilo (PL:ESTILO-TEXTO))
-  (princ (strcat "\n  [2] Estilo de texto -> " estilo "\n"))
+  (princ (strcat "\n  [3] Estilo de texto -> " estilo "\n"))
 
   (if (not (pl:garantir-estilo estilo))
     (progn
@@ -377,7 +440,7 @@
 )
 
 ;;; ---------------------------------------------------------------------------
-;;; ETAPA 3 - trocar alturas de texto conforme a tabela de regras
+;;; ETAPA 4 - trocar alturas de texto conforme a tabela de regras
 ;;; ---------------------------------------------------------------------------
 
 ;; Devolve a altura de destino para h, ou nil se nenhuma regra casa.
@@ -391,7 +454,7 @@
 
 (defun pl:etapa-altura (ss / e ed h nova res trocados travados sobraram
                              feitas)
-  (princ "\n  [3] Altura de texto\n")
+  (princ "\n  [4] Altura de texto\n")
 
   (if (null (PL:ALTURAS-TROCAR))
     (progn (princ "      nenhuma regra configurada\n") 0)
@@ -440,12 +503,12 @@
 )
 
 ;;; ---------------------------------------------------------------------------
-;;; ETAPA 4 - espacamento dentro das anotacoes de ferro
+;;; ETAPA 5 - espacamento dentro das anotacoes de ferro
 ;;; ---------------------------------------------------------------------------
 
 (defun pl:etapa-texto (ss / e ed tipo s novo res trocados travados
                             partidos exemplos)
-  (princ "\n  [4] Espacamento nas anotacoes\n")
+  (princ "\n  [5] Espacamento nas anotacoes\n")
 
   (if (null (PL:ESPACO-ANTES))
     (progn (princ "      nenhuma regra configurada\n") 0)
@@ -501,13 +564,13 @@
 )
 
 ;;; ---------------------------------------------------------------------------
-;;; ETAPA 5 - fator de largura dos textos
+;;; ETAPA 6 - fator de largura dos textos
 ;;; ---------------------------------------------------------------------------
 
 (defun pl:etapa-largura (ss / alvo e ed tipo w res trocados iguais travados
                               mtextos menor maior)
   (setq alvo (PL:LARGURA-TEXTO))
-  (princ (strcat "\n  [5] Fator de largura -> "
+  (princ (strcat "\n  [6] Fator de largura -> "
                  (if alvo (pl:fmt alvo) "(desligado)") "\n"))
 
   (if (null alvo)
@@ -605,11 +668,12 @@
       ;; Nao da para apagar a layer que esta corrente.
       (if (tblobjname "LAYER" "0") (setvar "CLAYER" "0"))
 
-      (pl:etapa-layers ss alvos)
-      (pl:etapa-estilo ss)
-      (pl:etapa-altura  ss)
-      (pl:etapa-texto   ss)
-      (pl:etapa-largura ss)
+      (pl:etapa-layers       ss alvos)
+      (pl:etapa-apagar-texto ss)
+      (pl:etapa-estilo       ss)
+      (pl:etapa-altura       ss)
+      (pl:etapa-texto        ss)
+      (pl:etapa-largura      ss)
 
       (princ "\n  Concluido.\n")))
 
