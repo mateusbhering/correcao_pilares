@@ -13,11 +13,13 @@
 ;;;    1) Apaga as layers de rotina (nome do pavimento, nome das vistas,
 ;;;       niveis intermediarios, nome da secao e sombra).
 ;;;    2) Troca o estilo de todos os textos para ROMANS.
+;;;    3) Troca alturas de texto conforme a tabela de regras.
 ;;;
 ;;;  Configuracao no topo do arquivo:
-;;;    PL:LAYERS-ROTINA  - layers apagadas. Aceita curinga (* e ?), entao
-;;;                        "CORTE_COTAS_*" pega todas que comecam assim.
-;;;    PL:ESTILO-TEXTO   - estilo de texto de destino.
+;;;    PL:LAYERS-ROTINA   - layers apagadas. Aceita curinga (* e ?), entao
+;;;                         "CORTE_COTAS_*" pega todas que comecam assim.
+;;;    PL:ESTILO-TEXTO    - estilo de texto de destino.
+;;;    PL:ALTURAS-TROCAR  - pares (altura atual . altura nova).
 ;;; ===========================================================================
 
 (vl-load-com)
@@ -41,6 +43,19 @@
 ;; Fonte usada caso o estilo de destino ainda nao exista no desenho.
 (defun PL:ESTILO-FONTE () "romans.shx")
 
+;; Trocas de altura de texto: (altura atual . altura nova)
+(defun PL:ALTURAS-TROCAR ()
+  (list
+    (cons 12.667 18.0)   ; titulo da tabela de detalhe
+  )
+)
+
+;; Folga na comparacao de altura. O CYPE grava valores quebrados
+;; (12.6666666..., 13.3333333...), entao comparar por igualdade exata
+;; nao acha nada. A folga precisa ser menor que a distancia entre duas
+;; alturas diferentes do desenho.
+(defun PL:ALTURA-TOL () 0.01)
+
 ;;; ---------------------------------------------------------------------------
 ;;; FUNCOES AUXILIARES
 ;;; ---------------------------------------------------------------------------
@@ -56,6 +71,9 @@
       (setq r (strcat r (chr c)))))
   r
 )
+
+;; Numero para texto, com 4 casas, independente das unidades do desenho.
+(defun pl:fmt (v) (rtos v 2 4))
 
 ;; Devolve os nomes reais de layer do desenho que casam com o padrao.
 (defun pl:casar-layers (padrao / td nome achados)
@@ -151,21 +169,35 @@
   sub
 )
 
-;; Troca o estilo de uma entidade de texto. Devolve:
-;;   'trocado   se mudou
-;;   'ok        se ja estava no estilo certo
-;;   'erro      se a troca falhou (tipicamente layer travada)
-;;   nil        se a entidade nao tem estilo de texto (ou foi apagada)
-(defun pl:trocar-estilo (e estilo / ed atual r)
-  (if (and (setq ed (entget e)) (setq atual (assoc 7 ed)))
-    (if (= (strcase (cdr atual)) (strcase estilo))
-      'ok
+;; Todas as entidades de texto de dentro da selecao, ja incluindo os
+;; ATTRIB de dentro dos blocos. Ignora o que ja foi apagado.
+(defun pl:textos (ss / lst i e ed tipo)
+  (setq lst nil i 0)
+  (repeat (sslength ss)
+    (setq e (ssname ss i))
+    (if (setq ed (entget e))
       (progn
-        (setq r (vl-catch-all-apply
-                  'entmod (list (subst (cons 7 estilo) atual ed))))
-        (if (or (vl-catch-all-error-p r) (null r))
-          'erro
-          (progn (entupd e) 'trocado))))
+        (setq tipo (cdr (assoc 0 ed)))
+        (cond
+          ((member tipo '("TEXT" "MTEXT" "ATTDEF")) (setq lst (cons e lst)))
+          ((= tipo "INSERT")
+           (foreach a (pl:atributos e) (setq lst (cons a lst)))))))
+    (setq i (1+ i)))
+  (reverse lst)
+)
+
+;; Troca um codigo DXF de uma entidade. Devolve:
+;;   'trocado   se mudou
+;;   'erro      se a alteracao falhou (tipicamente layer travada)
+;;   nil        se a entidade nao tem esse codigo (ou foi apagada)
+(defun pl:trocar-dxf (e codigo valor / ed atual r)
+  (if (and (setq ed (entget e)) (setq atual (assoc codigo ed)))
+    (progn
+      (setq r (vl-catch-all-apply
+                'entmod (list (subst (cons codigo valor) atual ed))))
+      (if (or (vl-catch-all-error-p r) (null r))
+        'erro
+        (progn (entupd e) 'trocado)))
     nil)
 )
 
@@ -227,8 +259,8 @@
 ;;; ETAPA 2 - padronizar o estilo de todos os textos
 ;;; ---------------------------------------------------------------------------
 
-(defun pl:etapa-estilo (ss / estilo i e ed tipo res trocados iguais
-                             travados pulados origens)
+(defun pl:etapa-estilo (ss / estilo lista e ed atual res trocados iguais
+                             travados pulados origens i tipo)
   (setq estilo (PL:ESTILO-TEXTO))
   (princ (strcat "\n  [2] Estilo de texto -> " estilo "\n"))
 
@@ -239,39 +271,30 @@
       0)
 
     (progn
-      (setq trocados 0 iguais 0 travados 0 pulados nil origens nil i 0)
-
+      ;; censo dos objetos cujo texto nao vem de um estilo de texto
+      (setq pulados nil i 0)
       (repeat (sslength ss)
-        (setq e (ssname ss i))
-        ;; entget devolve nil se a entidade foi apagada na etapa 1
-        (if (setq ed (entget e))
+        (if (setq ed (entget (ssname ss i)))
           (progn
             (setq tipo (cdr (assoc 0 ed)))
-            (cond
-              ;; texto direto
-              ((member tipo '("TEXT" "MTEXT" "ATTDEF"))
-               (setq res (pl:trocar-estilo e estilo))
-               (cond ((eq res 'trocado)
-                      (setq trocados (1+ trocados)
-                            origens  (pl:contar (cdr (assoc 7 ed)) origens)))
-                     ((eq res 'ok)   (setq iguais   (1+ iguais)))
-                     ((eq res 'erro) (setq travados (1+ travados)))))
-
-              ;; bloco: entra nos atributos
-              ((= tipo "INSERT")
-               (foreach a (pl:atributos e)
-                 (setq ed  (entget a)
-                       res (pl:trocar-estilo a estilo))
-                 (cond ((eq res 'trocado)
-                        (setq trocados (1+ trocados)
-                              origens  (pl:contar (cdr (assoc 7 ed)) origens)))
-                       ((eq res 'ok)   (setq iguais   (1+ iguais)))
-                       ((eq res 'erro) (setq travados (1+ travados))))))
-
-              ;; texto que vem de estilo proprio (cota, lider, tabela)
-              ((wcmatch tipo "DIMENSION,*LEADER,ACAD_TABLE,TABLE")
-               (setq pulados (pl:contar tipo pulados))))))
+            (if (wcmatch tipo "DIMENSION,*LEADER,ACAD_TABLE,TABLE")
+              (setq pulados (pl:contar tipo pulados)))))
         (setq i (1+ i)))
+
+      (setq trocados 0 iguais 0 travados 0 origens nil)
+
+      (foreach e (pl:textos ss)
+        (setq ed    (entget e)
+              atual (cdr (assoc 7 ed)))
+        (if (and atual (= (strcase atual) (strcase estilo)))
+          (setq iguais (1+ iguais))
+          (progn
+            (setq res (pl:trocar-dxf e 7 estilo))
+            (cond ((eq res 'trocado)
+                   (setq trocados (1+ trocados)
+                         origens  (pl:contar atual origens)))
+                  ((eq res 'erro)
+                   (setq travados (1+ travados)))))))
 
       (if (and (zerop trocados) (zerop iguais) (zerop travados))
         (princ "      nenhum texto nesta area\n")
@@ -298,10 +321,73 @@
 )
 
 ;;; ---------------------------------------------------------------------------
+;;; ETAPA 3 - trocar alturas de texto conforme a tabela de regras
+;;; ---------------------------------------------------------------------------
+
+;; Devolve a altura de destino para h, ou nil se nenhuma regra casa.
+(defun pl:nova-altura (h / tol achou)
+  (setq tol (PL:ALTURA-TOL) achou nil)
+  (foreach par (PL:ALTURAS-TROCAR)
+    (if (and (null achou) (<= (abs (- h (car par))) tol))
+      (setq achou (cdr par))))
+  achou
+)
+
+(defun pl:etapa-altura (ss / e ed h nova res trocados travados sobraram
+                             feitas)
+  (princ "\n  [3] Altura de texto\n")
+
+  (if (null (PL:ALTURAS-TROCAR))
+    (progn (princ "      nenhuma regra configurada\n") 0)
+
+    (progn
+      (setq trocados 0 travados 0 feitas nil sobraram nil)
+
+      (foreach e (pl:textos ss)
+        (setq ed (entget e)
+              h  (cdr (assoc 40 ed)))
+        (if h
+          (if (setq nova (pl:nova-altura h))
+            (progn
+              (setq res (pl:trocar-dxf e 40 nova))
+              (cond ((eq res 'trocado)
+                     (setq trocados (1+ trocados)
+                           feitas   (pl:contar (strcat (pl:fmt h) " -> "
+                                                       (pl:fmt nova))
+                                               feitas)))
+                    ((eq res 'erro)
+                     (setq travados (1+ travados)))))
+            ;; sem regra: guarda para o censo
+            (setq sobraram (pl:contar (pl:fmt h) sobraram)))))
+
+      (if (zerop trocados)
+        (princ "      nenhum texto com altura das regras nesta area\n")
+        (foreach par (reverse feitas)
+          (princ (strcat "      " (car par)
+                         "  (" (itoa (cdr par)) " textos)\n"))))
+
+      (if (> travados 0)
+        (princ (strcat "      ATENCAO: " (itoa travados)
+                       " textos nao puderam ser alterados"
+                       " (layer travada?)\n")))
+
+      ;; util para descobrir quais outras alturas existem na area
+      (if sobraram
+        (progn
+          (princ "      outras alturas encontradas (sem regra):\n        ")
+          (foreach par (reverse sobraram)
+            (princ (strcat (car par) " (" (itoa (cdr par)) ")  ")))
+          (princ "\n")))
+
+      (princ (strcat "      -> " (itoa trocados) " alturas trocadas\n"))
+      trocados))
+)
+
+;;; ---------------------------------------------------------------------------
 ;;; COMANDO PRINCIPAL
 ;;; ---------------------------------------------------------------------------
 
-(defun c:maqpilares ( / *error* ce cl alvos padrao nomes nome ss)
+(defun c:maqpilares ( / *error* ce cl alvos padrao nome ss)
 
   (defun *error* (msg)
     (if ce (setvar "CMDECHO" ce))
@@ -342,6 +428,7 @@
 
       (pl:etapa-layers ss alvos)
       (pl:etapa-estilo ss)
+      (pl:etapa-altura ss)
 
       (princ "\n  Concluido.\n")))
 
