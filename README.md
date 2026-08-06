@@ -6,6 +6,12 @@ pilares** exportados do CYPECAD, dentro do AutoCAD e do ZWCAD.
 O comando único `maqpilares` roda todas as etapas de correção em cima de uma
 área que você seleciona no desenho.
 
+> ### ⚙️ Automação atual: ~33% do fluxo
+>
+> **5 de 15** passos do trabalho de correção já são feitos pela rotina —
+> as 6 etapas do comando `maqpilares`. Os demais continuam na mão e estão
+> listados em [o que ainda não está automatizado](#o-que-ainda-não-está-automatizado).
+
 ---
 
 ## Índice
@@ -436,6 +442,28 @@ e no ZWCAD ainda depende de você rodar. **Rode sempre numa cópia primeiro.**
 
 Passos que continuam sendo feitos na mão. É a fila de trabalho das próximas
 etapas da rotina.
+
+### Como chegamos em ~33%
+
+```
+Total do fluxo   = 11 (a lista abaixo) + 4 (formatação, já automatizada
+                                            e por isso fora da lista)  = 15
+Automatizado     =  4 (estilo, altura, espaçamento, largura)
+                 + ~1 (parte do item 2, textos a apagar)               = ~5
+
+                                                        5 / 15 ≈ 33%
+```
+
+As etapas 3 a 6 da rotina — estilo, altura, espaçamento e fator de largura —
+não aparecem na lista abaixo porque já estão resolvidas. Contar só a lista
+daria ~5%, o que subestima o que foi feito.
+
+> **Contagem de passos não é medida de esforço.** Tudo o que está automatizado
+> é normalização: propriedade errada → propriedade certa, a categoria mais
+> barata de automatizar. O que resta é majoritariamente arranjo espacial
+> (mover, esticar, explodir, alinhar), onde o script precisa descobrir *onde*
+> as coisas estão, não só *o que* elas são. Em tempo de desenvolvimento, os
+> passos restantes valem várias vezes os já concluídos.
 
 **1 — Apagar elevação menor**
 
