@@ -1,0 +1,23 @@
+# --- Desenhos ---
+# Os DWG nao sobem para o repositorio (arquivos binarios e pesados).
+*.dwg
+*.DWG
+*.dxf
+*.DXF
+
+# --- Arquivos temporarios do AutoCAD / ZWCAD ---
+*.bak
+*.BAK
+*.dwl
+*.dwl2
+*.sv$
+*.ac$
+*.err
+*.log
+
+# --- Sistema ---
+.DS_Store
+Thumbs.db
+
+# --- Ferramentas locais ---
+.claude/
