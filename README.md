@@ -64,9 +64,10 @@ Select objects: [faça a janela]
   [2] Textos a apagar pelo conteudo
       24N[1]-%%c20
       8N[1]-%%c20
-      10N[2]-%%c20
-      ... e mais 9
-      -> 12 textos apagados
+      Escala vertical   1:50
+      Escala horizontal 1:25
+      ... e mais 22
+      -> 26 textos apagados
 
   [3] Estilo de texto -> ROMANS
       CYPETXT_romans -> ROMANS  (23 textos)
@@ -127,16 +128,29 @@ O relatório distingue três situações por layer:
 
 ### Etapa 2 — Apaga textos pelo conteúdo
 
-Apaga **o texto inteiro** de toda entidade cujo conteúdo contenha `[` ou `]`.
+Apaga **o texto inteiro** de toda entidade cujo conteúdo contenha um dos
+trechos de `PL:APAGAR-SE-CONTEM`.
 
-São os rótulos de numeração local do CYPE nas vistas de seção
-(`50N[1]-%%c25`, `8N[1]-%%c20`, `10N[2]-%%c20`…). O CYPE numera as barras
-localmente por seção, enquanto a elevação usa a numeração global (`N1`, `N4`,
-`N5`). No desenho modelo são **24 textos**, todos em
-`PILCPSECC_ARM_LONG_REFERENCIA`.
+| Trecho | Alvo | No desenho modelo |
+|---|---|---|
+| `[` e `]` | numeração local do CYPE: `50N[1]-%%c25`, `10N[2]-%%c20` | 24 textos, em `PILCPSECC_ARM_LONG_REFERENCIA` |
+| `Escala vertical` | `Escala vertical   1:50` | 14 textos, em `CORTE_TITULO_DA_TABELA_DE_DETALHE` |
+| `Escala horizontal` | `Escala horizontal 1:25` | 14 textos, na mesma layer |
 
-A comparação é **literal**, não curinga — `PL:APAGAR-SE-CONTEM` é uma lista de
-trechos, e basta um deles aparecer no texto para a entidade ser apagada.
+A comparação é **literal**, não curinga — basta o trecho aparecer em qualquer
+posição do texto para a entidade ser apagada.
+
+**Os trechos são curtos de propósito.** O texto da escala está gravado como
+`Escala vertical` seguido de **três espaços** e depois `1:50`; e o valor da
+escala muda de desenho para desenho. Casando só por `Escala vertical`, a regra
+funciona sem depender de espaçamento nem do número.
+
+> Cuidado ao encurtar demais: `Escala` sozinho apagaria também o `Escala:` do
+> carimbo.
+
+A layer `CORTE_TITULO_DA_TABELA_DE_DETALHE` **não** pode ser apagada inteira —
+ela guarda os títulos dos pilares (`P1`, `P2=P5=P16=P19`, `P12A`…), que ficam.
+Por isso a exclusão aqui é por conteúdo, e não por layer como na etapa 1.
 
 Atributos de bloco (`ATTRIB`) não são apagados: são sub-entidades e só somem
 mexendo na inserção ou na definição do bloco. Se algum casar com a regra, ele
@@ -211,7 +225,12 @@ Tudo fica no **topo do arquivo**. Não é preciso mexer no resto do código.
 
 ;; Textos com estes trechos são apagados inteiros, na etapa 2.
 (defun PL:APAGAR-SE-CONTEM ()
-  (list "[" "]")
+  (list
+    "["                    ; numeração local do CYPE: 50N[1]-%%c25
+    "]"
+    "Escala vertical"      ; "Escala vertical   1:50"
+    "Escala horizontal"    ; "Escala horizontal 1:25"
+  )
 )
 
 ;; Estilo de texto de destino da etapa 3.
@@ -249,6 +268,9 @@ Tudo fica no **topo do arquivo**. Não é preciso mexer no resto do código.
 ```lisp
 (cons 13.667 12.5)   ; tabela de quantitativos
 ```
+
+**Novo texto para apagar** — uma linha em `PL:APAGAR-SE-CONTEM`. Use o menor
+trecho que identifique o texto sem pegar outros.
 
 **Novo trecho para espaçar** — uma linha em `PL:ESPACO-ANTES`.
 

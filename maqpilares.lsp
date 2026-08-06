@@ -45,10 +45,20 @@
 )
 
 ;; Textos que contenham qualquer um destes trechos sao apagados inteiros.
-;; Comparacao literal, nao curinga. Os rotulos de numeracao local do CYPE
-;; ("50N[1]-%%c25") usam colchete e nao sao aproveitados no detalhamento.
+;; Comparacao literal, nao curinga: basta o trecho aparecer em qualquer
+;; posicao do texto.
+;;
+;; Os trechos sao propositalmente curtos. O texto da escala, por exemplo,
+;; esta gravado como "Escala vertical   1:50", com tres espacos, e o valor
+;; da escala muda de desenho para desenho. Casando so por "Escala vertical"
+;; a regra funciona sem depender de espacamento nem do numero.
 (defun PL:APAGAR-SE-CONTEM ()
-  (list "[" "]")
+  (list
+    "["                    ; numeracao local do CYPE: 50N[1]-%%c25
+    "]"
+    "Escala vertical"      ; "Escala vertical   1:50"
+    "Escala horizontal"    ; "Escala horizontal 1:25"
+  )
 )
 
 (defun PL:ESTILO-TEXTO () "ROMANS")
