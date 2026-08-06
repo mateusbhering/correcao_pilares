@@ -2,8 +2,11 @@
 ;;;  maqpilares.lsp
 ;;;  ---------------------------------------------------------------------------
 ;;;  Apaga as layers de rotina do detalhamento de armacao de pilares
-;;;  exportado do CYPECAD: remove o conteudo e depois o proprio registro
-;;;  da layer.
+;;;  exportado do CYPECAD.
+;;;
+;;;  A limpeza acontece SOMENTE dentro da area que o usuario selecionar.
+;;;  O registro da layer so e removido do desenho se, depois de apagar a
+;;;  selecao, nao tiver sobrado nada dela em nenhum outro lugar.
 ;;;
 ;;;  Comando:  maqpilares
 ;;;
@@ -58,7 +61,17 @@
   (reverse achados)
 )
 
-;; Descongela, destrava e liga a layer, para que o ERASE alcance tudo.
+;; Monta o filtro de ssget com varias layers de uma vez: "A,B,C".
+(defun pl:filtro (lst / s)
+  (setq s "")
+  (foreach n lst
+    (setq s (if (= s "") (pl:esc n) (strcat s "," (pl:esc n)))))
+  s
+)
+
+;; Descongela, destrava e liga a layer. Precisa acontecer ANTES da
+;; selecao: objeto em layer congelada, desligada ou travada nao pode
+;; ser selecionado pelo usuario.
 (defun pl:liberar-layer (nome / ed flag cor)
   (if (setq ed (tblobjname "LAYER" nome))
     (progn
@@ -73,15 +86,11 @@
     nil)
 )
 
-;; Apaga tudo que estiver na layer, em qualquer aba (modelo e layouts).
-;; Devolve a quantidade de objetos apagados.
-(defun pl:apagar-conteudo (nome / ss n)
-  (setq n 0)
+;; Quantos objetos ainda restam nessa layer, no desenho inteiro.
+(defun pl:restantes (nome / ss)
   (if (setq ss (ssget "_X" (list (cons 8 (pl:esc nome)))))
-    (progn
-      (setq n (sslength ss))
-      (command "_.ERASE" ss "")))
-  n
+    (sslength ss)
+    0)
 )
 
 ;; Remove o registro da layer. Tenta via ActiveX e, se falhar, via -PURGE.
@@ -100,12 +109,19 @@
   (not (tblobjname "LAYER" nome))
 )
 
+;; Soma 1 na contagem da layer dentro da lista associativa.
+(defun pl:contar (nome lst / par)
+  (if (setq par (assoc nome lst))
+    (subst (cons nome (1+ (cdr par))) par lst)
+    (cons (cons nome 1) lst))
+)
+
 ;;; ---------------------------------------------------------------------------
 ;;; COMANDO PRINCIPAL
 ;;; ---------------------------------------------------------------------------
 
-(defun c:maqpilares ( / *error* ce cl nomes nome n
-                    tot-obj tot-lay nao-achou presas)
+(defun c:maqpilares ( / *error* ce cl alvos padrao nomes nome ss i ed
+                        contagem qtd sobra tot-obj tot-lay nao-achou)
 
   (defun *error* (msg)
     (if ce (setvar "CMDECHO" ce))
@@ -119,54 +135,89 @@
         cl (getvar "CLAYER"))
   (setvar "CMDECHO" 0)
 
-  ;; Nao da para apagar a layer que esta corrente.
-  (if (tblobjname "LAYER" "0") (setvar "CLAYER" "0"))
-
-  (setq tot-obj   0
-        tot-lay   0
-        nao-achou nil
-        presas    nil)
-
   (princ "\n--- maqpilares: limpeza das layers de rotina ---\n")
 
+  ;; ---- 1) descobre quais layers da rotina existem neste desenho ----
+  (setq alvos nil nao-achou nil)
   (foreach padrao (PL:LAYERS-ROTINA)
-    (setq nomes (pl:casar-layers padrao))
-    (if (null nomes)
-      (setq nao-achou (cons padrao nao-achou))
+    (if (setq nomes (pl:casar-layers padrao))
       (foreach nome nomes
-        (pl:liberar-layer nome)
-        (setq n (pl:apagar-conteudo nome))
-        (setq tot-obj (+ tot-obj n))
-        (if (pl:deletar-layer nome)
-          (progn
-            (setq tot-lay (1+ tot-lay))
-            (princ (strcat "  [ok]      " nome
-                           "  (" (itoa n) " objetos)\n")))
-          (progn
-            (setq presas (cons nome presas))
-            (princ (strcat "  [conteudo] " nome
-                           "  (" (itoa n) " objetos apagados, layer nao pode ser removida)\n")))))))
+        (if (not (member nome alvos)) (setq alvos (cons nome alvos))))
+      (setq nao-achou (cons padrao nao-achou))))
+  (setq alvos (reverse alvos))
 
-  ;; ---- relatorio ----
-  (princ (strcat "\n  " (itoa tot-obj) " objetos apagados, "
-                 (itoa tot-lay) " layers removidas.\n"))
-
-  (if nao-achou
+  (if (null alvos)
     (progn
-      (princ "\n  Nao encontradas neste desenho:\n")
-      (foreach nome (reverse nao-achou)
-        (princ (strcat "    - " nome "\n")))))
+      (princ "\n  Nenhuma das layers de rotina existe neste desenho.\n")
+      (setvar "CMDECHO" ce)
+      (princ))
 
-  (if presas
     (progn
-      (princ "\n  Layers esvaziadas mas ainda presentes (algo as referencia,\n")
-      (princ "  normalmente uma definicao de bloco ou um estilo):\n")
-      (foreach nome (reverse presas)
-        (princ (strcat "    - " nome "\n")))))
+      ;; ---- 2) libera as layers para que possam ser selecionadas ----
+      ;; (objeto congelado, desligado ou travado nao entra na selecao)
+      (foreach nome alvos (pl:liberar-layer nome))
 
-  (setvar "CLAYER" cl)
-  (setvar "CMDECHO" ce)
-  (princ)
+      ;; ---- 3) pede a area ----
+      (princ "\n  Selecione a area do desenho a limpar")
+      (princ "\n  (janela, cerca ou clique; so entram as layers de rotina)\n")
+      (setq ss (ssget (list (cons 8 (pl:filtro alvos)))))
+
+      (if (null ss)
+        (princ "\n  Nada das layers de rotina foi encontrado nessa area.\n")
+
+        (progn
+          ;; ---- 4) conta por layer antes de apagar ----
+          (setq contagem nil i 0 tot-obj (sslength ss))
+          (repeat tot-obj
+            (setq ed       (entget (ssname ss i))
+                  contagem (pl:contar (cdr (assoc 8 ed)) contagem)
+                  i        (1+ i)))
+
+          ;; ---- 5) apaga ----
+          (command "_.ERASE" ss "")
+
+          ;; ---- 6) relatorio + remove a layer se ficou vazia ----
+          ;; Nao da para apagar a layer que esta corrente.
+          (if (tblobjname "LAYER" "0") (setvar "CLAYER" "0"))
+          (setq tot-lay 0)
+
+          (foreach nome alvos
+            (setq qtd   (cdr (assoc nome contagem))
+                  sobra (pl:restantes nome))
+            (cond
+              ;; nao tinha nada dessa layer na area selecionada
+              ((null qtd)
+               (princ (strcat "  [-]        " nome
+                              "  (nada nesta area, " (itoa sobra)
+                              " objetos em outro lugar)\n")))
+              ;; limpou a area e a layer ficou vazia -> remove o registro
+              ((zerop sobra)
+               (if (pl:deletar-layer nome)
+                 (progn
+                   (setq tot-lay (1+ tot-lay))
+                   (princ (strcat "  [ok]       " nome
+                                  "  (" (itoa qtd) " objetos, layer removida)\n")))
+                 (princ (strcat "  [conteudo] " nome
+                                "  (" (itoa qtd)
+                                " objetos, layer vazia mas nao pode ser removida)\n"))))
+              ;; limpou a area mas ainda ha conteudo fora dela
+              (T
+               (princ (strcat "  [parcial]  " nome
+                              "  (" (itoa qtd) " objetos apagados, restam "
+                              (itoa sobra) " fora da area)\n")))))
+
+          (princ (strcat "\n  " (itoa tot-obj) " objetos apagados, "
+                         (itoa tot-lay) " layers removidas.\n"))))
+
+      (if nao-achou
+        (progn
+          (princ "\n  Nao existem neste desenho:\n")
+          (foreach nome (reverse nao-achou)
+            (princ (strcat "    - " nome "\n")))))
+
+      (setvar "CLAYER" cl)
+      (setvar "CMDECHO" ce)
+      (princ)))
 )
 
 (princ "\nmaqpilares.lsp carregado.  Digite maqpilares para rodar.\n")
