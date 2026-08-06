@@ -1,20 +1,23 @@
 ;;; ===========================================================================
 ;;;  maqpilares.lsp
 ;;;  ---------------------------------------------------------------------------
-;;;  Apaga as layers de rotina do detalhamento de armacao de pilares
-;;;  exportado do CYPECAD.
-;;;
-;;;  A limpeza acontece SOMENTE dentro da area que o usuario selecionar.
-;;;  O registro da layer so e removido do desenho se, depois de apagar a
-;;;  selecao, nao tiver sobrado nada dela em nenhum outro lugar.
+;;;  Rotina de correcao dos desenhos de armacao de pilares exportados do
+;;;  CYPECAD, para AutoCAD e ZWCAD.
 ;;;
 ;;;  Comando:  maqpilares
 ;;;
-;;;  Compativel com AutoCAD e ZWCAD.
+;;;  TUDO acontece somente dentro da area que o usuario selecionar.
+;;;  A selecao e pedida UMA vez e todas as etapas rodam em cima dela.
 ;;;
-;;;  Para incluir ou tirar layers da rotina, edite SOMENTE a lista
-;;;  PL:LAYERS-ROTINA logo abaixo. Aceita curinga (* e ?), entao
-;;;  "CORTE_COTAS_*" pegaria todas as layers que comecam assim.
+;;;  Etapas:
+;;;    1) Apaga as layers de rotina (nome do pavimento, nome das vistas,
+;;;       niveis intermediarios, nome da secao e sombra).
+;;;    2) Troca o estilo de todos os textos para ROMANS.
+;;;
+;;;  Configuracao no topo do arquivo:
+;;;    PL:LAYERS-ROTINA  - layers apagadas. Aceita curinga (* e ?), entao
+;;;                        "CORTE_COTAS_*" pega todas que comecam assim.
+;;;    PL:ESTILO-TEXTO   - estilo de texto de destino.
 ;;; ===========================================================================
 
 (vl-load-com)
@@ -32,6 +35,11 @@
     "CORTE_PISOS"                            ; e - sombra
   )
 )
+
+(defun PL:ESTILO-TEXTO () "ROMANS")
+
+;; Fonte usada caso o estilo de destino ainda nao exista no desenho.
+(defun PL:ESTILO-FONTE () "romans.shx")
 
 ;;; ---------------------------------------------------------------------------
 ;;; FUNCOES AUXILIARES
@@ -59,14 +67,6 @@
       (setq achados (cons nome achados)))
     (setq td (tblnext "LAYER")))
   (reverse achados)
-)
-
-;; Monta o filtro de ssget com varias layers de uma vez: "A,B,C".
-(defun pl:filtro (lst / s)
-  (setq s "")
-  (foreach n lst
-    (setq s (if (= s "") (pl:esc n) (strcat s "," (pl:esc n)))))
-  s
 )
 
 ;; Descongela, destrava e liga a layer. Precisa acontecer ANTES da
@@ -109,19 +109,199 @@
   (not (tblobjname "LAYER" nome))
 )
 
-;; Soma 1 na contagem da layer dentro da lista associativa.
-(defun pl:contar (nome lst / par)
-  (if (setq par (assoc nome lst))
-    (subst (cons nome (1+ (cdr par))) par lst)
-    (cons (cons nome 1) lst))
+;; Soma 1 na contagem da chave dentro da lista associativa.
+(defun pl:contar (chave lst / par)
+  (if (setq par (assoc chave lst))
+    (subst (cons chave (1+ (cdr par))) par lst)
+    (cons (cons chave 1) lst))
+)
+
+;; Cria o estilo de texto se ele ainda nao existir no desenho.
+(defun pl:garantir-estilo (nome)
+  (if (not (tblobjname "STYLE" nome))
+    (entmake
+      (list '(0 . "STYLE")
+            '(100 . "AcDbSymbolTableRecord")
+            '(100 . "AcDbTextStyleTableRecord")
+            (cons 2 nome)
+            '(70 . 0)                       ; sem flags especiais
+            '(40 . 0.0)                     ; altura variavel
+            '(41 . 1.0)                     ; fator de largura
+            '(50 . 0.0)                     ; angulo obliquo
+            '(71 . 0)                       ; nao invertido
+            '(42 . 2.5)                     ; ultima altura usada
+            (cons 3 (PL:ESTILO-FONTE))
+            '(4 . ""))))
+  (if (tblobjname "STYLE" nome) T nil)
+)
+
+;; Sub-entidades ATTRIB de um INSERT com atributos.
+(defun pl:atributos (e / ed sub prox)
+  (setq sub nil ed (entget e))
+  (if (and (= (cdr (assoc 0 ed)) "INSERT")
+           (= 1 (cdr (assoc 66 ed))))
+    (progn
+      (setq prox (entnext e))
+      (while (and prox
+                  (setq ed (entget prox))
+                  (/= (cdr (assoc 0 ed)) "SEQEND"))
+        (if (= (cdr (assoc 0 ed)) "ATTRIB")
+          (setq sub (cons prox sub)))
+        (setq prox (entnext prox)))))
+  sub
+)
+
+;; Troca o estilo de uma entidade de texto. Devolve:
+;;   'trocado   se mudou
+;;   'ok        se ja estava no estilo certo
+;;   'erro      se a troca falhou (tipicamente layer travada)
+;;   nil        se a entidade nao tem estilo de texto (ou foi apagada)
+(defun pl:trocar-estilo (e estilo / ed atual r)
+  (if (and (setq ed (entget e)) (setq atual (assoc 7 ed)))
+    (if (= (strcase (cdr atual)) (strcase estilo))
+      'ok
+      (progn
+        (setq r (vl-catch-all-apply
+                  'entmod (list (subst (cons 7 estilo) atual ed))))
+        (if (or (vl-catch-all-error-p r) (null r))
+          'erro
+          (progn (entupd e) 'trocado))))
+    nil)
+)
+
+;;; ---------------------------------------------------------------------------
+;;; ETAPA 1 - apagar as layers de rotina que estao dentro da selecao
+;;; ---------------------------------------------------------------------------
+
+(defun pl:etapa-layers (ss alvos / mortos i e ed lay contagem qtd sobra
+                                   tot-obj tot-lay)
+  (princ "\n  [1] Layers de rotina\n")
+
+  ;; monta a sub-selecao so com o que esta nas layers alvo
+  (setq mortos (ssadd) contagem nil i 0)
+  (repeat (sslength ss)
+    (setq e   (ssname ss i)
+          ed  (entget e)
+          lay (cdr (assoc 8 ed)))
+    (if (member (strcase lay) alvos)
+      (progn (ssadd e mortos)
+             (setq contagem (pl:contar (strcase lay) contagem))))
+    (setq i (1+ i)))
+
+  (setq tot-obj (sslength mortos) tot-lay 0)
+
+  (if (zerop tot-obj)
+    (princ "      nada das layers de rotina nesta area\n")
+    (progn
+      (command "_.ERASE" mortos "")
+
+      (foreach nome (PL:LAYERS-ROTINA)
+        (foreach real (pl:casar-layers nome)
+          (setq qtd   (cdr (assoc (strcase real) contagem))
+                sobra (pl:restantes real))
+          (cond
+            ((null qtd)
+             (princ (strcat "      [-]        " real
+                            "  (nada nesta area, " (itoa sobra)
+                            " objetos em outro lugar)\n")))
+            ((zerop sobra)
+             (if (pl:deletar-layer real)
+               (progn
+                 (setq tot-lay (1+ tot-lay))
+                 (princ (strcat "      [ok]       " real
+                                "  (" (itoa qtd) " objetos, layer removida)\n")))
+               (princ (strcat "      [conteudo] " real
+                              "  (" (itoa qtd)
+                              " objetos, layer vazia mas nao pode ser removida)\n"))))
+            (T
+             (princ (strcat "      [parcial]  " real
+                            "  (" (itoa qtd) " objetos apagados, restam "
+                            (itoa sobra) " fora da area)\n"))))))
+
+      (princ (strcat "      -> " (itoa tot-obj) " objetos apagados, "
+                     (itoa tot-lay) " layers removidas\n"))))
+  tot-obj
+)
+
+;;; ---------------------------------------------------------------------------
+;;; ETAPA 2 - padronizar o estilo de todos os textos
+;;; ---------------------------------------------------------------------------
+
+(defun pl:etapa-estilo (ss / estilo i e ed tipo res trocados iguais
+                             travados pulados origens)
+  (setq estilo (PL:ESTILO-TEXTO))
+  (princ (strcat "\n  [2] Estilo de texto -> " estilo "\n"))
+
+  (if (not (pl:garantir-estilo estilo))
+    (progn
+      (princ (strcat "      nao foi possivel criar o estilo " estilo
+                     ", etapa ignorada\n"))
+      0)
+
+    (progn
+      (setq trocados 0 iguais 0 travados 0 pulados nil origens nil i 0)
+
+      (repeat (sslength ss)
+        (setq e (ssname ss i))
+        ;; entget devolve nil se a entidade foi apagada na etapa 1
+        (if (setq ed (entget e))
+          (progn
+            (setq tipo (cdr (assoc 0 ed)))
+            (cond
+              ;; texto direto
+              ((member tipo '("TEXT" "MTEXT" "ATTDEF"))
+               (setq res (pl:trocar-estilo e estilo))
+               (cond ((eq res 'trocado)
+                      (setq trocados (1+ trocados)
+                            origens  (pl:contar (cdr (assoc 7 ed)) origens)))
+                     ((eq res 'ok)   (setq iguais   (1+ iguais)))
+                     ((eq res 'erro) (setq travados (1+ travados)))))
+
+              ;; bloco: entra nos atributos
+              ((= tipo "INSERT")
+               (foreach a (pl:atributos e)
+                 (setq ed  (entget a)
+                       res (pl:trocar-estilo a estilo))
+                 (cond ((eq res 'trocado)
+                        (setq trocados (1+ trocados)
+                              origens  (pl:contar (cdr (assoc 7 ed)) origens)))
+                       ((eq res 'ok)   (setq iguais   (1+ iguais)))
+                       ((eq res 'erro) (setq travados (1+ travados))))))
+
+              ;; texto que vem de estilo proprio (cota, lider, tabela)
+              ((wcmatch tipo "DIMENSION,*LEADER,ACAD_TABLE,TABLE")
+               (setq pulados (pl:contar tipo pulados))))))
+        (setq i (1+ i)))
+
+      (if (and (zerop trocados) (zerop iguais) (zerop travados))
+        (princ "      nenhum texto nesta area\n")
+        (progn
+          (foreach par (reverse origens)
+            (princ (strcat "      " (car par) " -> " estilo
+                           "  (" (itoa (cdr par)) " textos)\n")))
+          (princ (strcat "      -> " (itoa trocados) " textos trocados, "
+                         (itoa iguais) " ja estavam em " estilo "\n"))))
+
+      (if (> travados 0)
+        (princ (strcat "      ATENCAO: " (itoa travados)
+                       " textos nao puderam ser alterados"
+                       " (layer travada?)\n")))
+
+      (if pulados
+        (progn
+          (princ "      nao alterados (o texto vem do estilo do proprio\n")
+          (princ "      objeto, nao de um estilo de texto):\n")
+          (foreach par (reverse pulados)
+            (princ (strcat "        " (car par) ": " (itoa (cdr par)) "\n")))))
+
+      trocados))
 )
 
 ;;; ---------------------------------------------------------------------------
 ;;; COMANDO PRINCIPAL
 ;;; ---------------------------------------------------------------------------
 
-(defun c:maqpilares ( / *error* ce cl alvos padrao nomes nome ss i ed
-                        contagem qtd sobra tot-obj tot-lay nao-achou)
+(defun c:maqpilares ( / *error* ce cl alvos padrao nomes nome ss)
 
   (defun *error* (msg)
     (if ce (setvar "CMDECHO" ce))
@@ -135,89 +315,39 @@
         cl (getvar "CLAYER"))
   (setvar "CMDECHO" 0)
 
-  (princ "\n--- maqpilares: limpeza das layers de rotina ---\n")
+  (princ "\n--- maqpilares ---\n")
 
-  ;; ---- 1) descobre quais layers da rotina existem neste desenho ----
-  (setq alvos nil nao-achou nil)
+  ;; ---- quais layers de rotina existem neste desenho ----
+  (setq alvos nil)
   (foreach padrao (PL:LAYERS-ROTINA)
-    (if (setq nomes (pl:casar-layers padrao))
-      (foreach nome nomes
-        (if (not (member nome alvos)) (setq alvos (cons nome alvos))))
-      (setq nao-achou (cons padrao nao-achou))))
-  (setq alvos (reverse alvos))
+    (foreach nome (pl:casar-layers padrao)
+      (if (not (member (strcase nome) alvos))
+        (setq alvos (cons (strcase nome) alvos)))))
 
-  (if (null alvos)
+  ;; ---- libera as layers para que possam ser selecionadas ----
+  ;; (objeto congelado, desligado ou travado nao entra na selecao)
+  (foreach nome alvos (pl:liberar-layer nome))
+
+  ;; ---- pede a area, uma vez so, para todas as etapas ----
+  (princ "\n  Selecione a area do desenho a corrigir")
+  (princ "\n  (janela ou cerca; o script decide o que mexer dentro dela)\n")
+  (setq ss (ssget))
+
+  (if (null ss)
+    (princ "\n  Nada selecionado.\n")
     (progn
-      (princ "\n  Nenhuma das layers de rotina existe neste desenho.\n")
-      (setvar "CMDECHO" ce)
-      (princ))
+      (princ (strcat "\n  " (itoa (sslength ss)) " objetos na area.\n"))
+      ;; Nao da para apagar a layer que esta corrente.
+      (if (tblobjname "LAYER" "0") (setvar "CLAYER" "0"))
 
-    (progn
-      ;; ---- 2) libera as layers para que possam ser selecionadas ----
-      ;; (objeto congelado, desligado ou travado nao entra na selecao)
-      (foreach nome alvos (pl:liberar-layer nome))
+      (pl:etapa-layers ss alvos)
+      (pl:etapa-estilo ss)
 
-      ;; ---- 3) pede a area ----
-      (princ "\n  Selecione a area do desenho a limpar")
-      (princ "\n  (janela, cerca ou clique; so entram as layers de rotina)\n")
-      (setq ss (ssget (list (cons 8 (pl:filtro alvos)))))
+      (princ "\n  Concluido.\n")))
 
-      (if (null ss)
-        (princ "\n  Nada das layers de rotina foi encontrado nessa area.\n")
-
-        (progn
-          ;; ---- 4) conta por layer antes de apagar ----
-          (setq contagem nil i 0 tot-obj (sslength ss))
-          (repeat tot-obj
-            (setq ed       (entget (ssname ss i))
-                  contagem (pl:contar (cdr (assoc 8 ed)) contagem)
-                  i        (1+ i)))
-
-          ;; ---- 5) apaga ----
-          (command "_.ERASE" ss "")
-
-          ;; ---- 6) relatorio + remove a layer se ficou vazia ----
-          ;; Nao da para apagar a layer que esta corrente.
-          (if (tblobjname "LAYER" "0") (setvar "CLAYER" "0"))
-          (setq tot-lay 0)
-
-          (foreach nome alvos
-            (setq qtd   (cdr (assoc nome contagem))
-                  sobra (pl:restantes nome))
-            (cond
-              ;; nao tinha nada dessa layer na area selecionada
-              ((null qtd)
-               (princ (strcat "  [-]        " nome
-                              "  (nada nesta area, " (itoa sobra)
-                              " objetos em outro lugar)\n")))
-              ;; limpou a area e a layer ficou vazia -> remove o registro
-              ((zerop sobra)
-               (if (pl:deletar-layer nome)
-                 (progn
-                   (setq tot-lay (1+ tot-lay))
-                   (princ (strcat "  [ok]       " nome
-                                  "  (" (itoa qtd) " objetos, layer removida)\n")))
-                 (princ (strcat "  [conteudo] " nome
-                                "  (" (itoa qtd)
-                                " objetos, layer vazia mas nao pode ser removida)\n"))))
-              ;; limpou a area mas ainda ha conteudo fora dela
-              (T
-               (princ (strcat "  [parcial]  " nome
-                              "  (" (itoa qtd) " objetos apagados, restam "
-                              (itoa sobra) " fora da area)\n")))))
-
-          (princ (strcat "\n  " (itoa tot-obj) " objetos apagados, "
-                         (itoa tot-lay) " layers removidas.\n"))))
-
-      (if nao-achou
-        (progn
-          (princ "\n  Nao existem neste desenho:\n")
-          (foreach nome (reverse nao-achou)
-            (princ (strcat "    - " nome "\n")))))
-
-      (setvar "CLAYER" cl)
-      (setvar "CMDECHO" ce)
-      (princ)))
+  (setvar "CLAYER" cl)
+  (setvar "CMDECHO" ce)
+  (princ)
 )
 
 (princ "\nmaqpilares.lsp carregado.  Digite maqpilares para rodar.\n")
