@@ -14,12 +14,14 @@
 ;;;       niveis intermediarios, nome da secao e sombra).
 ;;;    2) Troca o estilo de todos os textos para ROMANS.
 ;;;    3) Troca alturas de texto conforme a tabela de regras.
+;;;    4) Garante espaco antes de "c/" e "c=" nas anotacoes de ferro.
 ;;;
 ;;;  Configuracao no topo do arquivo:
 ;;;    PL:LAYERS-ROTINA   - layers apagadas. Aceita curinga (* e ?), entao
 ;;;                         "CORTE_COTAS_*" pega todas que comecam assim.
 ;;;    PL:ESTILO-TEXTO    - estilo de texto de destino.
 ;;;    PL:ALTURAS-TROCAR  - pares (altura atual . altura nova).
+;;;    PL:ESPACO-ANTES    - trechos que devem ter espaco na frente.
 ;;; ===========================================================================
 
 (vl-load-com)
@@ -57,6 +59,16 @@
 ;; alturas diferentes do desenho.
 (defun PL:ALTURA-TOL () 0.01)
 
+;; Trechos que devem ter um espaco na frente, dentro do texto.
+;; Nao e uma substituicao: se o espaco ja existir, nada muda. Por isso
+;; rodar a rotina duas vezes da o mesmo resultado, sem espaco dobrado.
+(defun PL:ESPACO-ANTES ()
+  (list
+    "c/"    ; N2-%%c5c/18      -> N2-%%c5 c/18
+    "c="    ; N1-24%%c20c=380  -> N1-24%%c20 c=380
+  )
+)
+
 ;;; ---------------------------------------------------------------------------
 ;;; FUNCOES AUXILIARES
 ;;; ---------------------------------------------------------------------------
@@ -75,6 +87,25 @@
 
 ;; Numero para texto, com 4 casas, independente das unidades do desenho.
 (defun pl:fmt (v) (rtos v 2 4))
+
+;; Garante um espaco antes de cada ocorrencia de "trecho" dentro de "s".
+;; Se o espaco ja existir, deixa como esta; se o trecho estiver no inicio
+;; da string, nao poe espaco. Idempotente de proposito: o resultado de
+;; aplicar duas vezes e igual ao de aplicar uma.
+(defun pl:espacar (s trecho / lt pos ini res ant)
+  (setq lt  (strlen trecho)
+        res ""
+        ini 1)
+  (while (setq pos (vl-string-search trecho s (1- ini)))
+    (setq pos (1+ pos))                       ; 0-based -> 1-based
+    (setq res (strcat res (substr s ini (- pos ini))))
+    (setq ant (if (> pos 1) (substr s (1- pos) 1) ""))
+    (if (and (> pos 1) (/= ant " "))
+      (setq res (strcat res " ")))
+    (setq res (strcat res trecho))
+    (setq ini (+ pos lt)))
+  (strcat res (substr s ini))
+)
 
 ;; Devolve os nomes reais de layer do desenho que casam com o padrao.
 (defun pl:casar-layers (padrao / td nome achados)
@@ -385,6 +416,67 @@
 )
 
 ;;; ---------------------------------------------------------------------------
+;;; ETAPA 4 - espacamento dentro das anotacoes de ferro
+;;; ---------------------------------------------------------------------------
+
+(defun pl:etapa-texto (ss / e ed tipo s novo res trocados travados
+                            partidos exemplos)
+  (princ "\n  [4] Espacamento nas anotacoes\n")
+
+  (if (null (PL:ESPACO-ANTES))
+    (progn (princ "      nenhuma regra configurada\n") 0)
+
+    (progn
+      (setq trocados 0 travados 0 partidos 0 exemplos nil)
+
+      (foreach e (pl:textos ss)
+        (setq ed   (entget e)
+              tipo (cdr (assoc 0 ed)))
+        (cond
+          ;; MTEXT longo guarda o texto em varios codigos 3 mais o 1.
+          ;; Mexer so no 1 quebraria o conteudo, entao passa longe.
+          ((and (= tipo "MTEXT") (assoc 3 ed))
+           (setq partidos (1+ partidos)))
+
+          (T
+           (if (setq s (cdr (assoc 1 ed)))
+             (progn
+               (setq novo s)
+               (foreach trecho (PL:ESPACO-ANTES)
+                 (setq novo (pl:espacar novo trecho)))
+               (if (/= novo s)
+                 (progn
+                   (setq res (pl:trocar-dxf e 1 novo))
+                   (cond ((eq res 'trocado)
+                          (setq trocados (1+ trocados))
+                          (if (< (length exemplos) 4)
+                            (setq exemplos (cons (cons s novo) exemplos))))
+                         ((eq res 'erro)
+                          (setq travados (1+ travados)))))))))))
+
+      (if (zerop trocados)
+        (princ "      nenhum texto precisava de espaco nesta area\n")
+        (progn
+          (foreach par (reverse exemplos)
+            (princ (strcat "      " (car par) "   ->   " (cdr par) "\n")))
+          (if (> trocados (length exemplos))
+            (princ (strcat "      ...\n")))))
+
+      (if (> travados 0)
+        (princ (strcat "      ATENCAO: " (itoa travados)
+                       " textos nao puderam ser alterados"
+                       " (layer travada?)\n")))
+
+      (if (> partidos 0)
+        (princ (strcat "      " (itoa partidos)
+                       " MTEXT longos nao alterados (texto dividido"
+                       " em varias partes)\n")))
+
+      (princ (strcat "      -> " (itoa trocados) " textos ajustados\n"))
+      trocados))
+)
+
+;;; ---------------------------------------------------------------------------
 ;;; COMANDO PRINCIPAL
 ;;; ---------------------------------------------------------------------------
 
@@ -430,6 +522,7 @@
       (pl:etapa-layers ss alvos)
       (pl:etapa-estilo ss)
       (pl:etapa-altura ss)
+      (pl:etapa-texto  ss)
 
       (princ "\n  Concluido.\n")))
 
