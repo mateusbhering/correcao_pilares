@@ -15,12 +15,14 @@
 ;;;    2) Troca o estilo de todos os textos para ROMANS.
 ;;;    3) Troca alturas de texto conforme a tabela de regras.
 ;;;    4) Garante espaco antes de "c/" e "c=" nas anotacoes de ferro.
+;;;    5) Uniformiza o fator de largura dos textos.
 ;;;
 ;;;  Configuracao no topo do arquivo:
 ;;;    PL:LAYERS-ROTINA   - layers apagadas. Aceita curinga (* e ?), entao
 ;;;                         "CORTE_COTAS_*" pega todas que comecam assim.
 ;;;    PL:ESTILO-TEXTO    - estilo de texto de destino.
 ;;;    PL:ALTURAS-TROCAR  - pares (altura atual . altura nova).
+;;;    PL:LARGURA-TEXTO   - fator de largura de destino.
 ;;;    PL:ESPACO-ANTES    - trechos que devem ter espaco na frente.
 ;;; ===========================================================================
 
@@ -58,6 +60,12 @@
 ;; nao acha nada. A folga precisa ser menor que a distancia entre duas
 ;; alturas diferentes do desenho.
 (defun PL:ALTURA-TOL () 0.01)
+
+;; Fator de largura de destino dos textos. nil desliga a etapa.
+;; Vale so para TEXT, ATTDEF e ATTRIB. MTEXT fica de fora de proposito:
+;; nele o codigo DXF 41 e a largura da caixa de texto, nao o fator de
+;; largura, e escrever 0.9 ali espremeria o paragrafo inteiro.
+(defun PL:LARGURA-TEXTO () 0.9)
 
 ;; Trechos que devem ter um espaco na frente, dentro do texto.
 ;; Nao e uma substituicao: se o espaco ja existir, nada muda. Por isso
@@ -216,6 +224,22 @@
            (foreach a (pl:atributos e) (setq lst (cons a lst)))))))
     (setq i (1+ i)))
   (reverse lst)
+)
+
+;; Define um codigo DXF, criando o par se ele ainda nao existir.
+;; Mesmos retornos de pl:trocar-dxf.
+(defun pl:definir-dxf (e codigo valor / ed atual novo r)
+  (if (setq ed (entget e))
+    (progn
+      (setq atual (assoc codigo ed))
+      (setq novo (if atual
+                   (subst (cons codigo valor) atual ed)
+                   (append ed (list (cons codigo valor)))))
+      (setq r (vl-catch-all-apply 'entmod (list novo)))
+      (if (or (vl-catch-all-error-p r) (null r))
+        'erro
+        (progn (entupd e) 'trocado)))
+    nil)
 )
 
 ;; Troca um codigo DXF de uma entidade. Devolve:
@@ -477,6 +501,68 @@
 )
 
 ;;; ---------------------------------------------------------------------------
+;;; ETAPA 5 - fator de largura dos textos
+;;; ---------------------------------------------------------------------------
+
+(defun pl:etapa-largura (ss / alvo e ed tipo w res trocados iguais travados
+                              mtextos menor maior)
+  (setq alvo (PL:LARGURA-TEXTO))
+  (princ (strcat "\n  [5] Fator de largura -> "
+                 (if alvo (pl:fmt alvo) "(desligado)") "\n"))
+
+  (if (null alvo)
+    (progn (princ "      etapa desligada\n") 0)
+
+    (progn
+      (setq trocados 0 iguais 0 travados 0 mtextos 0 menor nil maior nil)
+
+      (foreach e (pl:textos ss)
+        (setq ed   (entget e)
+              tipo (cdr (assoc 0 ed)))
+        (cond
+          ;; Em MTEXT o codigo 41 e a largura da caixa, nao o fator de
+          ;; largura. Escrever nele estragaria o paragrafo.
+          ((= tipo "MTEXT")
+           (setq mtextos (1+ mtextos)))
+
+          (T
+           (setq w (cdr (assoc 41 ed)))
+           (if (and w (< (abs (- w alvo)) 1e-6))
+             (setq iguais (1+ iguais))
+             (progn
+               (setq res (pl:definir-dxf e 41 alvo))
+               (cond ((eq res 'trocado)
+                      (setq trocados (1+ trocados))
+                      (if w
+                        (progn
+                          (if (or (null menor) (< w menor)) (setq menor w))
+                          (if (or (null maior) (> w maior)) (setq maior w)))))
+                     ((eq res 'erro)
+                      (setq travados (1+ travados)))))))))
+
+      (if (and (zerop trocados) (zerop iguais))
+        (princ "      nenhum texto nesta area\n")
+        (progn
+          (if (and menor maior)
+            (princ (strcat "      larguras originais entre "
+                           (pl:fmt menor) " e " (pl:fmt maior) "\n")))
+          (princ (strcat "      -> " (itoa trocados) " textos ajustados, "
+                         (itoa iguais) " ja estavam em " (pl:fmt alvo) "\n"))))
+
+      (if (> travados 0)
+        (princ (strcat "      ATENCAO: " (itoa travados)
+                       " textos nao puderam ser alterados"
+                       " (layer travada?)\n")))
+
+      (if (> mtextos 0)
+        (princ (strcat "      " (itoa mtextos)
+                       " MTEXT nao alterados (fator de largura de MTEXT"
+                       " vem do estilo)\n")))
+
+      trocados))
+)
+
+;;; ---------------------------------------------------------------------------
 ;;; COMANDO PRINCIPAL
 ;;; ---------------------------------------------------------------------------
 
@@ -521,8 +607,9 @@
 
       (pl:etapa-layers ss alvos)
       (pl:etapa-estilo ss)
-      (pl:etapa-altura ss)
-      (pl:etapa-texto  ss)
+      (pl:etapa-altura  ss)
+      (pl:etapa-texto   ss)
+      (pl:etapa-largura ss)
 
       (princ "\n  Concluido.\n")))
 

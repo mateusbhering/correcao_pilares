@@ -78,6 +78,11 @@ Select objects: [faça a janela]
       ...
       -> 31 textos ajustados
 
+  [5] Fator de largura -> 0.9000
+      larguras originais entre 0.7213 e 1.1565
+      -> 614 textos ajustados, 539 ja estavam em 0.9000
+      37 MTEXT nao alterados (fator de largura de MTEXT vem do estilo)
+
   Concluido.
 ```
 
@@ -149,6 +154,18 @@ N1-24%%c20c=380     ->    N1-24%%c20 c=380
 N2-+9N3- c/18       ->    N2-+9N3- c/18       (já estava certo, não mexe)
 ```
 
+### Etapa 5 — Uniformiza o fator de largura
+
+Coloca o fator de largura de todos os textos em **0,9**.
+
+O CYPE grava um fator diferente para cada texto, calculado para encaixar o
+conteúdo na caixa. No desenho modelo há **68 valores distintos**, de 0,7213 a
+1,1565 — e 539 textos já em 0,9. A etapa uniformiza os outros 614.
+
+Vale para `TEXT`, `ATTDEF` e `ATTRIB`. **`MTEXT` fica de fora de propósito**:
+nele o código DXF 41 é a largura da caixa de texto, não o fator de largura, e
+escrever 0,9 ali espremeria o parágrafo inteiro para 0,9 unidade de largura.
+
 ---
 
 ## Configuração
@@ -184,6 +201,9 @@ Tudo fica no **topo do arquivo**. Não é preciso mexer no resto do código.
 
 ;; Folga na comparação de altura.
 (defun PL:ALTURA-TOL () 0.01)
+
+;; Fator de largura de destino da etapa 5. nil desliga a etapa.
+(defun PL:LARGURA-TEXTO () 0.9)
 
 ;; Trechos que devem ter espaço na frente, na etapa 4.
 (defun PL:ESPACO-ANTES ()
@@ -323,6 +343,15 @@ Casos verificados contra os 38 textos do desenho que contêm `c/` ou `c=`
 | Dois trechos no mesmo texto | `N1-%%c20c=380c/10` → `N1-%%c20 c=380 c/10` |
 | Aplicar três vezes | igual a aplicar uma |
 
+### O código DXF 41 significa coisas diferentes em TEXT e MTEXT
+
+Em `TEXT`, `ATTDEF` e `ATTRIB` o código 41 é o **fator de largura**. Em
+`MTEXT` o mesmo código é a **largura da caixa de texto**. Aplicar 0,9 num
+MTEXT não deixaria a fonte mais estreita — espremeria o parágrafo inteiro
+para 0,9 unidade de largura.
+
+Por isso a etapa 5 exclui MTEXT e informa quantos encontrou.
+
 ### Falhas aparecem no relatório
 
 Se o `entmod` falhar — tipicamente porque o texto está em layer travada — o
@@ -364,16 +393,14 @@ Problemas identificados no desenho modelo que a rotina ainda não trata:
 3. **Posições não resolvidas nas seções** — os cortes usam `N[1]`, `N[2]`,
    `N[3]` (numeração local do CYPE) enquanto a elevação usa a global `N1`,
    `N4`, `N5`, `N8`. Aparece `N4-` ao lado de `8N[1]-%%c20`.
-4. **Fator de largura 0,923** gravado na própria entidade de texto, não no
-   estilo. Trocar o estilo não corrige — o texto continua espremido.
-5. **19 layers vazias** (`GrAcad01-06`, `Usuario01-03`, `Lista_Ferros_*`,
+4. **19 layers vazias** (`GrAcad01-06`, `Usuario01-03`, `Lista_Ferros_*`,
    `Telas de Aço*`, `PILAR_BETAO`, `Cotas`…).
-6. **5.568 `POLYLINE_2D` no formato antigo**, com 135 mil vértices soltos —
+5. **5.568 `POLYLINE_2D` no formato antigo**, com 135 mil vértices soltos —
    contra apenas 6 `LWPOLYLINE`. Converter reduz muito o arquivo.
-7. **3 objetos OLE** na layer 0, que costumam dar problema no ZWCAD.
-8. **Espessuras muito finas** nas layers do CYPE (0,00 / 0,09 / 0,15 /
+6. **3 objetos OLE** na layer 0, que costumam dar problema no ZWCAD.
+7. **Espessuras muito finas** nas layers do CYPE (0,00 / 0,09 / 0,15 /
    0,20 mm).
-9. **Layers com `Ø` e acentos** (`ARM_LONGITUDINAL_Ø20`, `Telas de Aço em
+8. **Layers com `Ø` e acentos** (`ARM_LONGITUDINAL_Ø20`, `Telas de Aço em
    Elevação`) — risco de encoding entre AutoCAD e ZWCAD.
 
 ---
@@ -398,7 +425,8 @@ Arquivo único: `maqpilares.lsp`.
 
 ```
 CONFIGURACAO          PL:LAYERS-ROTINA, PL:ESTILO-TEXTO, PL:ESTILO-FONTE,
-                      PL:ALTURAS-TROCAR, PL:ALTURA-TOL, PL:ESPACO-ANTES
+                      PL:ALTURAS-TROCAR, PL:ALTURA-TOL, PL:LARGURA-TEXTO,
+                      PL:ESPACO-ANTES
 
 AUXILIARES            pl:esc              protege curingas em nome de layer
                       pl:fmt              número -> texto, 4 casas
@@ -413,12 +441,14 @@ AUXILIARES            pl:esc              protege curingas em nome de layer
                       pl:textos           textos da seleção, já com ATTRIB
                       pl:trocar-dxf       troca um código DXF com tratamento
                                           de erro
+                      pl:definir-dxf      idem, criando o par se faltar
 
 ETAPAS                pl:etapa-layers     [1]
                       pl:etapa-estilo     [2]
                       pl:nova-altura      regra da [3]
                       pl:etapa-altura     [3]
                       pl:etapa-texto      [4]
+                      pl:etapa-largura    [5]
 
 COMANDO               c:maqpilares
 ```
